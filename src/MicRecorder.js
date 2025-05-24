@@ -65,7 +65,7 @@ const MicRecorderComponent = () => {
       formData.append("file", new File([audioBlob], "recording.wav"));
 
       try {
-        const res = await fetch("https://ac38-3-237-33-70.ngrok-free.app/voice-assist", {
+        const res = await fetch("https://d26c-3-237-33-70.ngrok-free.app/voice-assist", {
           method: "POST",
           body: formData,
         });

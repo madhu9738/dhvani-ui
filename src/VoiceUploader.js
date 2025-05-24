@@ -16,7 +16,7 @@ const VoiceUploader = () => {
     setStatus("⏫ Uploading...");
 
     try {
-      const res = await fetch("https://ac38-3-237-33-70.ngrok-free.app/upload-voice", {
+      const res = await fetch("https://d26c-3-237-33-70.ngrok-free.app/upload-voice", {
         method: "POST",
         body: formData,
       });
