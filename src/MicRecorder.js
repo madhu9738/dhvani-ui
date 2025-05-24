@@ -27,10 +27,10 @@ const MicRecorderComponent = () => {
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
 
-      const audioContext = new AudioContext();
+      const audioContext = new AudioContext({ sampleRate: 16000 });
       await audioContext.resume();
       const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      const processor = audioContext.createScriptProcessor(480, 1, 1);
 
       const VAD = await createVAD();
       const vad = new VAD(VADMode.AGGRESSIVE, 16000);
@@ -47,20 +47,24 @@ const MicRecorderComponent = () => {
           pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
         }
 
-        const result = vad.processFrame(pcmData);
-        if (result === VADEvent.VOICE) {
-          silenceStart = Date.now();
-        } else if (result === VADEvent.SILENCE) {
-          if (Date.now() - silenceStart > 1000) {
-            console.log("🛑 VAD detected silence, stopping recording...");
-            processor.disconnect();
-            source.disconnect();
-            processor.onaudioprocess = null;
-            if (mediaRecorder.state === "recording") {
-              mediaRecorder.stop();
-              stream.getTracks().forEach(track => track.stop());
+        try {
+          const result = vad.processFrame(pcmData);
+          if (result === VADEvent.VOICE) {
+            silenceStart = Date.now();
+          } else if (result === VADEvent.SILENCE) {
+            if (Date.now() - silenceStart > 1000) {
+              console.log("🛑 VAD detected silence, stopping recording...");
+              processor.disconnect();
+              source.disconnect();
+              processor.onaudioprocess = null;
+              if (mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+                stream.getTracks().forEach(track => track.stop());
+              }
             }
           }
+        } catch (err) {
+          console.error("VAD processing error:", err);
         }
       };
 
@@ -146,4 +150,3 @@ const MicRecorderComponent = () => {
 };
 
 export default MicRecorderComponent;
-
