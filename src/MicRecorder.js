@@ -11,8 +11,7 @@ const MicRecorderComponent = () => {
   const audioRef = useRef(null);
   const streamRef = useRef(null);
   const audioContextRef = useRef(null);
-  const sourceRef = useRef(null);
-  const processorRef = useRef(null);
+  const workletNodeRef = useRef(null);
 
   useEffect(() => {
     navigator.mediaDevices.enumerateDevices().then((allDevices) => {
@@ -33,49 +32,37 @@ const MicRecorderComponent = () => {
 
       const audioContext = new AudioContext({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
-      await audioContext.resume();
+      await audioContext.audioWorklet.addModule("/mic-processor.js");
+
+      const vad = new (await createVAD())(VADMode.AGGRESSIVE, 16000);
 
       const source = audioContext.createMediaStreamSource(streamRef.current);
-      const processor = audioContext.createScriptProcessor(512, 1, 1);
-      sourceRef.current = source;
-      processorRef.current = processor;
+      const workletNode = new AudioWorkletNode(audioContext, "mic-processor");
+      workletNodeRef.current = workletNode;
 
-      const VAD = await createVAD();
-      const vad = new VAD(VADMode.AGGRESSIVE, 16000);
+      source.connect(workletNode).connect(audioContext.destination);
 
       let silenceStart = Date.now();
-      let frameBuffer = [];
 
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-
-      processor.onaudioprocess = (event) => {
-        const inputData = event.inputBuffer.getChannelData(0);
-        for (let i = 0; i < inputData.length; i++) {
-          frameBuffer.push(Math.max(-1, Math.min(1, inputData[i])) * 32767);
-          if (frameBuffer.length === 480) {
-            const pcmData = new Int16Array(frameBuffer);
-            try {
-              const result = vad.processFrame(pcmData);
-              if (result === VADEvent.VOICE) {
-                silenceStart = Date.now();
-              } else if (result === VADEvent.SILENCE) {
-                if (Date.now() - silenceStart > 1000) {
-                  console.log("🛑 VAD detected silence, stopping recorder...");
-                  processor.disconnect();
-                  source.disconnect();
-                  processor.onaudioprocess = null;
-                  if (mediaRecorderRef.current?.state === "recording") {
-                    mediaRecorderRef.current.stop();
-                  }
-                  audioContext.close();
-                }
+      workletNode.port.onmessage = (event) => {
+        const pcmData = event.data;
+        try {
+          const result = vad.processFrame(pcmData);
+          if (result === VADEvent.VOICE) {
+            silenceStart = Date.now();
+          } else if (result === VADEvent.SILENCE) {
+            if (Date.now() - silenceStart > 1000) {
+              console.log("🛑 VAD detected silence, stopping recorder...");
+              source.disconnect();
+              workletNode.disconnect();
+              if (mediaRecorderRef.current?.state === "recording") {
+                mediaRecorderRef.current.stop();
               }
-            } catch (err) {
-              console.error("VAD processing error:", err);
+              audioContext.close();
             }
-            frameBuffer = [];
           }
+        } catch (err) {
+          console.error("VAD error:", err);
         }
       };
 
@@ -113,28 +100,27 @@ const MicRecorderComponent = () => {
 
           audio.play();
         } catch (err) {
-          console.error("❌ Error sending or receiving:", err);
+          console.error("❌ Error in send/receive:", err);
         }
       };
 
       mediaRecorder.start();
     } catch (error) {
-      console.error("❌ Error during startRecording:", error);
+      console.error("❌ Error in startRecording:", error);
     }
   };
 
   const toggleRecording = () => {
     if (isRunning) {
-      console.log("�� Stopping Smart Loop...");
+      console.log("🛑 Stopping Smart Loop...");
       setIsRunning(false);
       mediaRecorderRef.current?.stop();
-      processorRef.current?.disconnect();
-      sourceRef.current?.disconnect();
+      workletNodeRef.current?.disconnect();
       audioContextRef.current?.close();
       streamRef.current?.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     } else {
-      console.log("▶️ Starting Smart Loop...");
+      console.log("▶️ Starting Smart Loop with AudioWorklet...");
       setIsRunning(true);
       startRecording();
     }
