@@ -11,6 +11,8 @@ const MicRecorderComponent = () => {
   const audioRef = useRef(null);
   const streamRef = useRef(null);
   const audioContextRef = useRef(null);
+  const sourceRef = useRef(null);
+  const processorRef = useRef(null);
 
   useEffect(() => {
     navigator.mediaDevices.enumerateDevices().then((allDevices) => {
@@ -22,19 +24,21 @@ const MicRecorderComponent = () => {
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
-      });
-      streamRef.current = stream;
-
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
+      if (!streamRef.current) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
+        });
+        streamRef.current = stream;
+      }
 
       const audioContext = new AudioContext({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
       await audioContext.resume();
-      const source = audioContext.createMediaStreamSource(stream);
+
+      const source = audioContext.createMediaStreamSource(streamRef.current);
       const processor = audioContext.createScriptProcessor(512, 1, 1);
+      sourceRef.current = source;
+      processorRef.current = processor;
 
       const VAD = await createVAD();
       const vad = new VAD(VADMode.AGGRESSIVE, 16000);
@@ -57,13 +61,12 @@ const MicRecorderComponent = () => {
                 silenceStart = Date.now();
               } else if (result === VADEvent.SILENCE) {
                 if (Date.now() - silenceStart > 1000) {
-                  console.log("🛑 VAD detected silence, stopping recording...");
+                  console.log("🛑 VAD detected silence, stopping recorder...");
                   processor.disconnect();
                   source.disconnect();
                   processor.onaudioprocess = null;
-                  if (mediaRecorder.state === "recording") {
-                    mediaRecorder.stop();
-                    stream.getTracks().forEach(track => track.stop());
+                  if (mediaRecorderRef.current?.state === "recording") {
+                    mediaRecorderRef.current.stop();
                   }
                   audioContext.close();
                 }
@@ -75,6 +78,9 @@ const MicRecorderComponent = () => {
           }
         }
       };
+
+      const mediaRecorder = new MediaRecorder(streamRef.current);
+      mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -95,29 +101,19 @@ const MicRecorderComponent = () => {
             body: formData,
           });
 
-          const contentType = res.headers.get("content-type");
-          if (contentType && contentType.includes("application/json")) {
-            const data = await res.json();
-            const turn = data?.turn ?? "unknown";
-            if (turn !== "finished") {
-              setTimeout(() => startRecording(), 500);
-              return;
-            }
-          }
-
           const replyBlob = await res.blob();
           const audioURL = URL.createObjectURL(replyBlob);
           const audio = new Audio(audioURL);
           audioRef.current = audio;
 
           audio.onended = () => {
-            console.log("🔁 Response playback ended. Resuming...");
+            console.log("🔁 Playback ended, restarting detection...");
             if (isRunning) setTimeout(() => startRecording(), 500);
           };
 
           audio.play();
         } catch (err) {
-          console.error("❌ Error in sending/receiving:", err);
+          console.error("❌ Error sending or receiving:", err);
         }
       };
 
@@ -129,13 +125,16 @@ const MicRecorderComponent = () => {
 
   const toggleRecording = () => {
     if (isRunning) {
-      console.log("🛑 Stopping loop...");
+      console.log("�� Stopping Smart Loop...");
       setIsRunning(false);
       mediaRecorderRef.current?.stop();
-      streamRef.current?.getTracks().forEach(track => track.stop());
+      processorRef.current?.disconnect();
+      sourceRef.current?.disconnect();
       audioContextRef.current?.close();
+      streamRef.current?.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
     } else {
-      console.log("▶️ Starting loop...");
+      console.log("▶️ Starting Smart Loop...");
       setIsRunning(true);
       startRecording();
     }
