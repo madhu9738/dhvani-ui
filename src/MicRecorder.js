@@ -106,6 +106,7 @@ const MicRecorderComponent = () => {
           audioRef.current = audio;
 
           audio.onended = () => {
+            console.log("🔁 Response playback ended. Resuming...");
             if (isRunning) startRecording();
           };
 
@@ -123,9 +124,11 @@ const MicRecorderComponent = () => {
 
   const toggleRecording = () => {
     if (isRunning) {
+      console.log("🛑 Stopping loop...");
       setIsRunning(false);
       mediaRecorderRef.current?.stop();
     } else {
+      console.log("▶️ Starting loop...");
       setIsRunning(true);
       startRecording();
     }
