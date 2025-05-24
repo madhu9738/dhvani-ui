@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from "react";
 import createVAD, { VADMode, VADEvent } from "@ozymandiasthegreat/vad";
 
@@ -6,11 +7,9 @@ const MicRecorderComponent = () => {
   const [devices, setDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const audioRef = useRef(null);
   const streamRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const workletNodeRef = useRef(null);
+  const audioRef = useRef(null);
+  const vadRef = useRef(null);
 
   useEffect(() => {
     navigator.mediaDevices.enumerateDevices().then((allDevices) => {
@@ -20,112 +19,77 @@ const MicRecorderComponent = () => {
     });
   }, []);
 
-  const setupAudioProcessing = async () => {
-    const audioContext = new AudioContext({ sampleRate: 16000 });
-    audioContextRef.current = audioContext;
-    await audioContext.audioWorklet.addModule("/mic-processor.js");
-
+  const startChunkLoop = async () => {
     const vad = new (await createVAD())(VADMode.AGGRESSIVE, 16000);
+    vadRef.current = vad;
 
-    const source = audioContext.createMediaStreamSource(streamRef.current);
-    const workletNode = new AudioWorkletNode(audioContext, "mic-processor");
-    workletNodeRef.current = workletNode;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
+    });
+    streamRef.current = stream;
 
-    source.connect(workletNode).connect(audioContext.destination);
+    const recorder = new MediaRecorder(stream);
+    mediaRecorderRef.current = recorder;
 
-    let silenceStart = Date.now();
-
-    workletNode.port.onmessage = (event) => {
-      const pcmData = event.data;
+    recorder.ondataavailable = async (event) => {
+      if (event.data.size === 0) return;
+      const blob = event.data;
+      const arrayBuffer = await blob.arrayBuffer();
+      const audioCtx = new AudioContext();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      const pcm = audioBuffer.getChannelData(0).slice(0, 480).map(s => Math.max(-1, Math.min(1, s)) * 32767);
       try {
-        const result = vad.processFrame(pcmData);
+        const result = vad.processFrame(Int16Array.from(pcm));
         if (result === VADEvent.VOICE) {
-          silenceStart = Date.now();
+          console.log("🔊 Detected voice...");
         } else if (result === VADEvent.SILENCE) {
-          if (Date.now() - silenceStart > 1000) {
-            console.log("🛑 VAD detected silence, stopping recorder...");
-            workletNode.disconnect();
-            source.disconnect();
-            if (mediaRecorderRef.current?.state === "recording") {
-              mediaRecorderRef.current.stop();
-            }
-            audioContext.close();
-          }
+          console.log("🛑 Detected silence, sending chunk...");
+          sendToBackend(blob);
         }
       } catch (err) {
-        console.error("VAD error:", err);
+        console.error("VAD processing error:", err);
       }
     };
+
+    recorder.onstop = () => console.log("⏹ Recorder stopped.");
+    recorder.start(1000);  // every second
   };
 
-  const startRecording = async () => {
+  const sendToBackend = async (blob) => {
+    const formData = new FormData();
+    formData.append("file", new File([blob], "recording.wav"));
+
     try {
-      if (!streamRef.current) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
-        });
-        streamRef.current = stream;
-      }
+      const res = await fetch("https://d26c-3-237-33-70.ngrok-free.app/voice-assist", {
+        method: "POST",
+        body: formData,
+      });
 
-      const mediaRecorder = new MediaRecorder(streamRef.current);
-      mediaRecorderRef.current = mediaRecorder;
+      const replyBlob = await res.blob();
+      const audioURL = URL.createObjectURL(replyBlob);
+      const audio = new Audio(audioURL);
+      audioRef.current = audio;
 
-      await setupAudioProcessing();
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
+      audio.onended = () => {
+        console.log("🔁 Done playing, waiting for next chunk...");
       };
 
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/wav" });
-        audioChunksRef.current = [];
-
-        const formData = new FormData();
-        formData.append("file", new File([audioBlob], "recording.wav"));
-
-        try {
-          const res = await fetch("https://d26c-3-237-33-70.ngrok-free.app/voice-assist", {
-            method: "POST",
-            body: formData,
-          });
-
-          const replyBlob = await res.blob();
-          const audioURL = URL.createObjectURL(replyBlob);
-          const audio = new Audio(audioURL);
-          audioRef.current = audio;
-
-          audio.onended = () => {
-            console.log("🔁 Playback ended, restarting detection...");
-            if (isRunning) setTimeout(() => startRecording(), 500);
-          };
-
-          audio.play();
-        } catch (err) {
-          console.error("❌ Error sending/receiving:", err);
-        }
-      };
-
-      mediaRecorder.start();
-    } catch (error) {
-      console.error("❌ Error in startRecording:", error);
+      audio.play();
+    } catch (err) {
+      console.error("❌ Failed to send/receive:", err);
     }
   };
 
   const toggleRecording = () => {
     if (isRunning) {
-      console.log("🛑 Stopping Smart Loop...");
+      console.log("🛑 Stopping...");
       setIsRunning(false);
       mediaRecorderRef.current?.stop();
-      workletNodeRef.current?.disconnect();
-      audioContextRef.current?.close();
       streamRef.current?.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
     } else {
-      console.log("▶️ Starting Smart Loop with AudioWorklet...");
+      console.log("▶️ Starting chunk-based loop...");
       setIsRunning(true);
-      startRecording();
+      startChunkLoop();
     }
   };
 
