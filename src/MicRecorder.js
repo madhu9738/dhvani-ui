@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from "react";
-import { VAD } from "@ozymandiasthegreat/vad";
+import createVAD, { VADMode, VADEvent } from "@ozymandiasthegreat/vad";
 
 const MicRecorderComponent = () => {
   const [isRunning, setIsRunning] = useState(false);
@@ -32,7 +32,9 @@ const MicRecorderComponent = () => {
       const source = audioContext.createMediaStreamSource(stream);
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
 
-      const vad = new VAD(VAD.Mode.AGGRESSIVE);
+      const VAD = await createVAD();
+      const vad = new VAD(VADMode.AGGRESSIVE, 16000);
+
       source.connect(processor);
       processor.connect(audioContext.destination);
 
@@ -45,10 +47,10 @@ const MicRecorderComponent = () => {
           pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
         }
 
-        const voice = vad.processAudio(pcmData, 16000);
-        if (voice === VAD.Event.VOICE) {
+        const result = vad.processFrame(pcmData);
+        if (result === VADEvent.VOICE) {
           silenceStart = Date.now();
-        } else {
+        } else if (result === VADEvent.SILENCE) {
           if (Date.now() - silenceStart > 1000) {
             console.log("🛑 VAD detected silence, stopping recording...");
             processor.disconnect();
@@ -144,3 +146,4 @@ const MicRecorderComponent = () => {
 };
 
 export default MicRecorderComponent;
+
