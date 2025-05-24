@@ -1,16 +1,28 @@
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 
 const MicRecorderComponent = () => {
   const [isRunning, setIsRunning] = useState(false);
+  const [devices, setDevices] = useState([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const audioRef = useRef(null);
 
+  useEffect(() => {
+    navigator.mediaDevices.enumerateDevices().then((allDevices) => {
+      const audioInputs = allDevices.filter((d) => d.kind === "audioinput");
+      setDevices(audioInputs);
+      if (audioInputs.length > 0) setSelectedDeviceId(audioInputs[0].deviceId);
+    });
+  }, []);
+
   const startRecording = async () => {
     try {
       console.log("🔁 Starting recording setup...");
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
+      });
       console.log("🎙 Stream tracks:", stream.getTracks());
 
       const mediaRecorder = new MediaRecorder(stream);
@@ -131,6 +143,18 @@ const MicRecorderComponent = () => {
 
   return (
     <div>
+      <label>Select Microphone: </label>
+      <select
+        value={selectedDeviceId}
+        onChange={(e) => setSelectedDeviceId(e.target.value)}
+      >
+        {devices.map((device) => (
+          <option key={device.deviceId} value={device.deviceId}>
+            {device.label || "Unnamed device"}
+          </option>
+        ))}
+      </select>
+      <br />
       <button onClick={toggleRecording}>
         {isRunning ? "⏹ Stop" : "🎙 Start"}
       </button>
