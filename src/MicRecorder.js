@@ -1,6 +1,5 @@
 
 import React, { useState, useRef, useEffect } from "react";
-import createVAD, { VADMode, VADEvent } from "@ozymandiasthegreat/vad";
 
 const MicRecorderComponent = () => {
   const [isRunning, setIsRunning] = useState(false);
@@ -9,7 +8,6 @@ const MicRecorderComponent = () => {
   const mediaRecorderRef = useRef(null);
   const streamRef = useRef(null);
   const audioRef = useRef(null);
-  const vadRef = useRef(null);
 
   useEffect(() => {
     navigator.mediaDevices.enumerateDevices().then((allDevices) => {
@@ -19,10 +17,7 @@ const MicRecorderComponent = () => {
     });
   }, []);
 
-  const startChunkLoop = async () => {
-    const vad = new (await createVAD())(VADMode.AGGRESSIVE, 16000);
-    vadRef.current = vad;
-
+  const startLoop = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
     });
@@ -34,24 +29,11 @@ const MicRecorderComponent = () => {
     recorder.ondataavailable = async (event) => {
       if (event.data.size === 0) return;
       const blob = event.data;
-      const arrayBuffer = await blob.arrayBuffer();
-      const int16Data = new Int16Array(arrayBuffer.slice(0, 960));  // just for VAD
-
-      try {
-        const result = vad.processFrame(int16Data);
-        if (result === VADEvent.VOICE) {
-          console.log("🔊 Detected voice...");
-        } else if (result === VADEvent.SILENCE) {
-          console.log("🛑 Detected silence, sending chunk...");
-          sendToBackend(blob);
-        }
-      } catch (err) {
-        console.error("VAD processing error:", err);
-      }
+      sendToBackend(blob);
     };
 
     recorder.onstop = () => console.log("⏹ Recorder stopped.");
-    recorder.start(1000);  // every second
+    recorder.start(1000);  // chunk every second
   };
 
   const sendToBackend = async (blob) => {
@@ -70,12 +52,12 @@ const MicRecorderComponent = () => {
       audioRef.current = audio;
 
       audio.onended = () => {
-        console.log("🔁 Done playing, waiting for next chunk...");
+        console.log("🔁 Playback ended.");
       };
 
       audio.play();
     } catch (err) {
-      console.error("❌ Failed to send/receive:", err);
+      console.error("❌ Error sending/receiving:", err);
     }
   };
 
@@ -86,9 +68,9 @@ const MicRecorderComponent = () => {
       mediaRecorderRef.current?.stop();
       streamRef.current?.getTracks().forEach(track => track.stop());
     } else {
-      console.log("▶️ Starting chunk-based loop...");
+      console.log("▶️ Starting chunk send loop...");
       setIsRunning(true);
-      startChunkLoop();
+      startLoop();
     }
   };
 
