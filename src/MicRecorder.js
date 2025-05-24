@@ -35,11 +35,10 @@ const MicRecorderComponent = () => {
       if (event.data.size === 0) return;
       const blob = event.data;
       const arrayBuffer = await blob.arrayBuffer();
-      const audioCtx = new AudioContext();
-      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-      const pcm = audioBuffer.getChannelData(0).slice(0, 480).map(s => Math.max(-1, Math.min(1, s)) * 32767);
+      const int16Data = new Int16Array(arrayBuffer.slice(0, 960));  // just for VAD
+
       try {
-        const result = vad.processFrame(Int16Array.from(pcm));
+        const result = vad.processFrame(int16Data);
         if (result === VADEvent.VOICE) {
           console.log("🔊 Detected voice...");
         } else if (result === VADEvent.SILENCE) {
