@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from "react";
 
 const MicRecorderComponent = () => {
@@ -17,13 +16,8 @@ const MicRecorderComponent = () => {
     });
   }, []);
 
-  const startLoop = async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
-    });
-    streamRef.current = stream;
-
-    const recorder = new MediaRecorder(stream);
+  const startRecorder = () => {
+    const recorder = new MediaRecorder(streamRef.current);
     mediaRecorderRef.current = recorder;
 
     recorder.ondataavailable = async (event) => {
@@ -32,8 +26,19 @@ const MicRecorderComponent = () => {
       sendToBackend(blob);
     };
 
-    recorder.onstop = () => console.log("⏹ Recorder stopped.");
-    recorder.start(1000);  // chunk every second
+    recorder.onstop = () => {
+      console.log("⏹ Recorder stopped.");
+    };
+
+    recorder.start(1000); // capture every second
+  };
+
+  const startLoop = async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
+    });
+    streamRef.current = stream;
+    startRecorder();
   };
 
   const sendToBackend = async (blob) => {
@@ -52,7 +57,10 @@ const MicRecorderComponent = () => {
       audioRef.current = audio;
 
       audio.onended = () => {
-        console.log("🔁 Playback ended.");
+        console.log("🔁 Playback ended. Restarting recorder...");
+        if (isRunning) {
+          startRecorder();  // 🧠 This line restarts the recording loop
+        }
       };
 
       audio.play();
