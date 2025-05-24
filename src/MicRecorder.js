@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useEffect } from "react";
+import { VAD } from "@ozymandiasthegreat/vad";
 
 const MicRecorderComponent = () => {
   const [isRunning, setIsRunning] = useState(false);
@@ -19,68 +20,55 @@ const MicRecorderComponent = () => {
 
   const startRecording = async () => {
     try {
-      console.log("🔁 Starting recording setup...");
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
       });
-      console.log("🎙 Stream tracks:", stream.getTracks());
 
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
 
       const audioContext = new AudioContext();
       await audioContext.resume();
-      console.log("🔈 AudioContext resumed");
-
       const source = audioContext.createMediaStreamSource(stream);
-      const gainNode = audioContext.createGain();
-      gainNode.gain.value = 5.0;
-      console.log("📈 Gain node applied");
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
 
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 2048;
+      const vad = new VAD(VAD.Mode.AGGRESSIVE);
+      source.connect(processor);
+      processor.connect(audioContext.destination);
 
-      source.connect(gainNode);
-      gainNode.connect(analyser);
-
-      const data = new Uint8Array(analyser.fftSize);
       let silenceStart = Date.now();
 
-      const detectSilence = () => {
-        analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) {
-          const val = data[i] - 128;
-          sum += val * val;
+      processor.onaudioprocess = (event) => {
+        const inputData = event.inputBuffer.getChannelData(0);
+        const pcmData = new Int16Array(inputData.length);
+        for (let i = 0; i < inputData.length; i++) {
+          pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
         }
-        const volume = Math.sqrt(sum / data.length);
-        console.log("🔊 RMS Volume:", volume, "🎛 Raw data:", data.slice(0, 10));
 
-        if (volume < 3) {
+        const voice = vad.processAudio(pcmData, 16000);
+        if (voice === VAD.Event.VOICE) {
+          silenceStart = Date.now();
+        } else {
           if (Date.now() - silenceStart > 1000) {
-            console.log("🛑 Silence detected, stopping recording...");
+            console.log("🛑 VAD detected silence, stopping recording...");
+            processor.disconnect();
+            source.disconnect();
+            processor.onaudioprocess = null;
             if (mediaRecorder.state === "recording") {
               mediaRecorder.stop();
               stream.getTracks().forEach(track => track.stop());
             }
-            return;
           }
-        } else {
-          silenceStart = Date.now();
         }
-
-        if (isRunning) requestAnimationFrame(detectSilence);
       };
 
       mediaRecorder.ondataavailable = (event) => {
-        console.log("📥 MediaRecorder data available:", event.data.size);
         if (event.data.size > 0) {
           audioChunksRef.current.push(event.data);
         }
       };
 
       mediaRecorder.onstop = async () => {
-        console.log("📤 MediaRecorder stopped, preparing to send...");
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/wav" });
         audioChunksRef.current = [];
 
@@ -88,7 +76,6 @@ const MicRecorderComponent = () => {
         formData.append("file", new File([audioBlob], "recording.wav"));
 
         try {
-          console.log("🌐 Sending audio to backend...");
           const res = await fetch("https://d26c-3-237-33-70.ngrok-free.app/voice-assist", {
             method: "POST",
             body: formData,
@@ -98,7 +85,6 @@ const MicRecorderComponent = () => {
           if (contentType && contentType.includes("application/json")) {
             const data = await res.json();
             const turn = data?.turn ?? "unknown";
-            console.log("🕐 Turn check result:", turn);
             if (turn !== "finished") {
               setTimeout(() => startRecording(), 500);
               return;
@@ -111,7 +97,6 @@ const MicRecorderComponent = () => {
           audioRef.current = audio;
 
           audio.onended = () => {
-            console.log("🔁 Audio playback ended");
             if (isRunning) startRecording();
           };
 
@@ -122,8 +107,6 @@ const MicRecorderComponent = () => {
       };
 
       mediaRecorder.start();
-      detectSilence();
-      console.log("🎙 Recording started...");
     } catch (error) {
       console.error("❌ Error during startRecording:", error);
     }
@@ -131,11 +114,9 @@ const MicRecorderComponent = () => {
 
   const toggleRecording = () => {
     if (isRunning) {
-      console.log("🛑 Stopping recording manually...");
       setIsRunning(false);
       mediaRecorderRef.current?.stop();
     } else {
-      console.log("▶️ Starting recording manually...");
       setIsRunning(true);
       startRecording();
     }
