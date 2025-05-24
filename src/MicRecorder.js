@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from "react";
 import createVAD, { VADMode, VADEvent } from "@ozymandiasthegreat/vad";
 
@@ -21,6 +20,44 @@ const MicRecorderComponent = () => {
     });
   }, []);
 
+  const setupAudioProcessing = async () => {
+    const audioContext = new AudioContext({ sampleRate: 16000 });
+    audioContextRef.current = audioContext;
+    await audioContext.audioWorklet.addModule("/mic-processor.js");
+
+    const vad = new (await createVAD())(VADMode.AGGRESSIVE, 16000);
+
+    const source = audioContext.createMediaStreamSource(streamRef.current);
+    const workletNode = new AudioWorkletNode(audioContext, "mic-processor");
+    workletNodeRef.current = workletNode;
+
+    source.connect(workletNode).connect(audioContext.destination);
+
+    let silenceStart = Date.now();
+
+    workletNode.port.onmessage = (event) => {
+      const pcmData = event.data;
+      try {
+        const result = vad.processFrame(pcmData);
+        if (result === VADEvent.VOICE) {
+          silenceStart = Date.now();
+        } else if (result === VADEvent.SILENCE) {
+          if (Date.now() - silenceStart > 1000) {
+            console.log("🛑 VAD detected silence, stopping recorder...");
+            workletNode.disconnect();
+            source.disconnect();
+            if (mediaRecorderRef.current?.state === "recording") {
+              mediaRecorderRef.current.stop();
+            }
+            audioContext.close();
+          }
+        }
+      } catch (err) {
+        console.error("VAD error:", err);
+      }
+    };
+  };
+
   const startRecording = async () => {
     try {
       if (!streamRef.current) {
@@ -30,44 +67,10 @@ const MicRecorderComponent = () => {
         streamRef.current = stream;
       }
 
-      const audioContext = new AudioContext({ sampleRate: 16000 });
-      audioContextRef.current = audioContext;
-      await audioContext.audioWorklet.addModule("/mic-processor.js");
-
-      const vad = new (await createVAD())(VADMode.AGGRESSIVE, 16000);
-
-      const source = audioContext.createMediaStreamSource(streamRef.current);
-      const workletNode = new AudioWorkletNode(audioContext, "mic-processor");
-      workletNodeRef.current = workletNode;
-
-      source.connect(workletNode).connect(audioContext.destination);
-
-      let silenceStart = Date.now();
-
-      workletNode.port.onmessage = (event) => {
-        const pcmData = event.data;
-        try {
-          const result = vad.processFrame(pcmData);
-          if (result === VADEvent.VOICE) {
-            silenceStart = Date.now();
-          } else if (result === VADEvent.SILENCE) {
-            if (Date.now() - silenceStart > 1000) {
-              console.log("🛑 VAD detected silence, stopping recorder...");
-              source.disconnect();
-              workletNode.disconnect();
-              if (mediaRecorderRef.current?.state === "recording") {
-                mediaRecorderRef.current.stop();
-              }
-              audioContext.close();
-            }
-          }
-        } catch (err) {
-          console.error("VAD error:", err);
-        }
-      };
-
       const mediaRecorder = new MediaRecorder(streamRef.current);
       mediaRecorderRef.current = mediaRecorder;
+
+      await setupAudioProcessing();
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -100,7 +103,7 @@ const MicRecorderComponent = () => {
 
           audio.play();
         } catch (err) {
-          console.error("❌ Error in send/receive:", err);
+          console.error("❌ Error sending/receiving:", err);
         }
       };
 
