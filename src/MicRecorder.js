@@ -9,6 +9,8 @@ const MicRecorderComponent = () => {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const audioRef = useRef(null);
+  const streamRef = useRef(null);
+  const audioContextRef = useRef(null);
 
   useEffect(() => {
     navigator.mediaDevices.enumerateDevices().then((allDevices) => {
@@ -23,11 +25,13 @@ const MicRecorderComponent = () => {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
       });
+      streamRef.current = stream;
 
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
 
       const audioContext = new AudioContext({ sampleRate: 16000 });
+      audioContextRef.current = audioContext;
       await audioContext.resume();
       const source = audioContext.createMediaStreamSource(stream);
       const processor = audioContext.createScriptProcessor(512, 1, 1);
@@ -61,6 +65,7 @@ const MicRecorderComponent = () => {
                     mediaRecorder.stop();
                     stream.getTracks().forEach(track => track.stop());
                   }
+                  audioContext.close();
                 }
               }
             } catch (err) {
@@ -107,7 +112,7 @@ const MicRecorderComponent = () => {
 
           audio.onended = () => {
             console.log("🔁 Response playback ended. Resuming...");
-            if (isRunning) startRecording();
+            if (isRunning) setTimeout(() => startRecording(), 500);
           };
 
           audio.play();
@@ -127,6 +132,8 @@ const MicRecorderComponent = () => {
       console.log("🛑 Stopping loop...");
       setIsRunning(false);
       mediaRecorderRef.current?.stop();
+      streamRef.current?.getTracks().forEach(track => track.stop());
+      audioContextRef.current?.close();
     } else {
       console.log("▶️ Starting loop...");
       setIsRunning(true);
