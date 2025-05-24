@@ -30,41 +30,44 @@ const MicRecorderComponent = () => {
       const audioContext = new AudioContext({ sampleRate: 16000 });
       await audioContext.resume();
       const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(480, 1, 1);
+      const processor = audioContext.createScriptProcessor(512, 1, 1);
 
       const VAD = await createVAD();
       const vad = new VAD(VADMode.AGGRESSIVE, 16000);
 
+      let silenceStart = Date.now();
+      let frameBuffer = [];
+
       source.connect(processor);
       processor.connect(audioContext.destination);
 
-      let silenceStart = Date.now();
-
       processor.onaudioprocess = (event) => {
         const inputData = event.inputBuffer.getChannelData(0);
-        const pcmData = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
-          pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
-        }
-
-        try {
-          const result = vad.processFrame(pcmData);
-          if (result === VADEvent.VOICE) {
-            silenceStart = Date.now();
-          } else if (result === VADEvent.SILENCE) {
-            if (Date.now() - silenceStart > 1000) {
-              console.log("🛑 VAD detected silence, stopping recording...");
-              processor.disconnect();
-              source.disconnect();
-              processor.onaudioprocess = null;
-              if (mediaRecorder.state === "recording") {
-                mediaRecorder.stop();
-                stream.getTracks().forEach(track => track.stop());
+          frameBuffer.push(Math.max(-1, Math.min(1, inputData[i])) * 32767);
+          if (frameBuffer.length === 480) {
+            const pcmData = new Int16Array(frameBuffer);
+            try {
+              const result = vad.processFrame(pcmData);
+              if (result === VADEvent.VOICE) {
+                silenceStart = Date.now();
+              } else if (result === VADEvent.SILENCE) {
+                if (Date.now() - silenceStart > 1000) {
+                  console.log("🛑 VAD detected silence, stopping recording...");
+                  processor.disconnect();
+                  source.disconnect();
+                  processor.onaudioprocess = null;
+                  if (mediaRecorder.state === "recording") {
+                    mediaRecorder.stop();
+                    stream.getTracks().forEach(track => track.stop());
+                  }
+                }
               }
+            } catch (err) {
+              console.error("VAD processing error:", err);
             }
+            frameBuffer = [];
           }
-        } catch (err) {
-          console.error("VAD processing error:", err);
         }
       };
 
